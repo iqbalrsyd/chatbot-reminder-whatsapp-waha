@@ -12,6 +12,7 @@ import (
 type WAHAClient struct {
 	BaseURL string
 	Session string
+	APIKey  string // API Key for authentication
 }
 
 // SendTextRequest represents the request body for sending text message
@@ -22,10 +23,11 @@ type SendTextRequest struct {
 }
 
 // NewWAHAClient creates a new WAHA client
-func NewWAHAClient(baseURL, session string) *WAHAClient {
+func NewWAHAClient(baseURL, session, apiKey string) *WAHAClient {
 	return &WAHAClient{
 		BaseURL: baseURL,
 		Session: session,
+		APIKey:  apiKey,
 	}
 }
 
@@ -52,6 +54,11 @@ func (w *WAHAClient) SendText(chatID, text string) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+
+	// Add API key if available
+	if w.APIKey != "" {
+		req.Header.Set("X-Api-Key", w.APIKey)
+	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)

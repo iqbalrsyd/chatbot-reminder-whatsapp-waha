@@ -44,9 +44,10 @@ func main() {
 	wahaURL := getEnv("WAHA_URL", "http://localhost:3000")
 	session := getEnv("SESSION", "mybot")
 	geminiKey := getEnv("GEMINI_API_KEY", "")
+	wahaAPIKey := getEnv("WAHA_API_KEY", "") // WAHA API Key
 
 	// Initialize clients
-	wahaClient = internal.NewWAHAClient(wahaURL, session)
+	wahaClient = internal.NewWAHAClient(wahaURL, session, wahaAPIKey)
 	geminiClient = internal.NewGeminiClient(geminiKey)
 	log.Printf("🤖 AI Provider: Gemini (gemini-2.5-flash)")
 

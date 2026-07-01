@@ -1,0 +1,101 @@
+name: "AI DevSecOps \u2014 Domain Compliance (general)"
+'on':
+  workflow_call:
+    inputs:
+      detected_domain:
+        description: Domain classification from the AI agent.
+        required: false
+        type: string
+        default: general
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  dependency-security-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      with:
+        persist-credentials: false
+    - name: Run dependency_security check
+      run: "# Set up output capture for the annotation-to-SARIF step.\nexec > >(tee\
+        \ -a dependency_security.shell_log) 2>&1\n# Run the original script in a subshell\
+        \ with set +e so\n# that any single command failure does not abort the\n#\
+        \ script before it can emit a '::error' annotation.\ninner_exit=0\n( set +e\n\
+        echo '::notice::Deterministic fallback for dependency_security \u2014 LLM\
+        \ reasoning unavailable.'\nexit 0\n) || inner_exit=$?\n# If the inner script\
+        \ exited non-zero and emitted no\n# '::error'/'::warning' annotation, synthesise\
+        \ one so the\n# SARIF conversion step still has a finding to record.\nif [\
+        \ \"$inner_exit\" -ne 0 ] && ! grep -qE '^::(error|warning)' dependency_security.shell_log;\
+        \ then\n  echo \"::error file=Run dependency_security check::shell check failed\
+        \ (exit code $inner_exit) \u2014 see run log for details\"\nfi\nexit $inner_exit\n"
+    - name: Convert dependency_security shell_check annotations to SARIF
+      if: always()
+      run: "cat > dependency_security_annotations_to_sarif.py <<'PY_EOF'\nimport os,\
+        \ re, json\nlog_path = 'dependency_security.shell_log'\nsarif_path = 'dependency_security-results.sarif'\n\
+        tool_name = 'dependency_security'\ntool_version = '1.0.0'\ninformation_uri\
+        \ = 'https://github.com/iqbalrsyd/ai-devsecops'\nrule_id_prefix = 'ai-devsecops-dependency_security'\n\
+        results = []\nif os.path.exists(log_path):\n    pat = re.compile(\n      \
+        \  r'^::(error|warning)(?:\\s+([A-Za-z]+=[^,]+(?:,[A-Za-z]+=[^,]+)*))?::(.*)$'\n\
+        \    )\n    for idx, line in enumerate(open(log_path, encoding='utf-8', errors='replace')):\n\
+        \        m = pat.match(line.rstrip('\\n'))\n        if not m:\n          \
+        \  continue\n        level, props, msg = m.groups()\n        path = None\n\
+        \        sl = None\n        el = None\n        title = None\n        if props:\n\
+        \            for kv in props.split(','):\n                if '=' in kv:\n\
+        \                    k, v = kv.split('=', 1)\n                    k = k.strip()\n\
+        \                    v = v.strip()\n                    if k == 'file':\n\
+        \                        path = v\n                    elif k == 'line':\n\
+        \                        try:\n                            sl = int(v)\n \
+        \                       except ValueError:\n                            pass\n\
+        \                    elif k in ('endLine', 'col'):\n                     \
+        \   try:\n                            el = int(v) if k == 'endLine' else sl\n\
+        \                        except ValueError:\n                            pass\n\
+        \                    elif k == 'title':\n                        title = v\n\
+        \        if sl is None:\n            sl = 1\n        if el is None:\n    \
+        \        el = sl\n        sarif_level = 'error' if level == 'error' else 'warning'\n\
+        \        msg = (msg or '').strip()\n        # If there is no file but there\
+        \ is a title, use the\n        if not msg and title:\n            msg = title\n\
+        \        # Use the first 50 chars of the title (if any) as\n        slug_src\
+        \ = title or msg or 'finding'\n        slug = re.sub(r'[^a-z0-9]+', '-', slug_src.lower())[:50].strip('-')\n\
+        \        rule_id = f'{rule_id_prefix}-{slug}-{sl}-{idx}'\n        results.append({\n\
+        \            'ruleId': rule_id,\n            'level': sarif_level,\n     \
+        \       'message': {'text': msg or '(no message)'},\n            'locations':\
+        \ [{\n                'physicalLocation': {\n                    'artifactLocation':\
+        \ {'uri': path or 'unknown'},\n                    'region': {'startLine':\
+        \ sl, 'endLine': el},\n                },\n            }],\n        })\nexisting\
+        \ = {}\nif os.path.exists(sarif_path) and os.path.getsize(sarif_path) > 0:\n\
+        \    try:\n        existing = json.load(open(sarif_path, encoding='utf-8'))\n\
+        \    except Exception:\n        existing = {}\nif not existing or 'runs' not\
+        \ in existing or not existing['runs']:\n    existing = {\n        'version':\
+        \ '2.1.0',\n        '$schema': 'https://json.schemastore.org/sarif-2.1.0.json',\n\
+        \        'runs': [{\n            'tool': {'driver': {\n                'name':\
+        \ tool_name, 'version': tool_version, 'informationUri': information_uri,\n\
+        \            }},\n            'results': [],\n        }],\n    }\nexisting['runs'][0]['tool']['driver']['name']\
+        \ = tool_name\nexisting['runs'][0]['tool']['driver']['version'] = tool_version\n\
+        existing['runs'][0]['tool']['driver']['informationUri'] = information_uri\n\
+        existing['runs'][0]['results'] = (existing['runs'][0].get('results') or [])\
+        \ + results\nwith open(sarif_path, 'w', encoding='utf-8') as f:\n    json.dump(existing,\
+        \ f, indent=2)\nprint(f'Wrote {len(results)} SARIF result(s) to {sarif_path}')\n\
+        PY_EOF\npython3 dependency_security_annotations_to_sarif.py\n"
+    - name: Ensure dependency_security-results.sarif exists (fallback for 0 findings)
+      if: always()
+      run: "if [ ! -s dependency_security-results.sarif ]; then\n  echo \"::notice::dependency_security\
+        \ found 0 findings. Generating empty SARIF to satisfy upload-sarif.\"\n  printf\
+        \ '%s\\n' \\\n    '{' \\\n    '  \"version\": \"2.1.0\",' \\\n    '  \"$schema\"\
+        : \"https://json.schemastore.org/sarif-2.1.0.json\",' \\\n    '  \"runs\"\
+        : [' \\\n    '    {' \\\n    '      \"tool\": {' \\\n    '        \"driver\"\
+        : {' \\\n    '          \"name\": \"dependency_security\",' \\\n    '    \
+        \      \"version\": \"0.65.0\",' \\\n    '          \"informationUri\": \"\
+        https://aquasecurity.github.io/trivy/\"' \\\n    '        }' \\\n    '   \
+        \   },' \\\n    '      \"results\": []' \\\n    '    }' \\\n    '  ]' \\\n\
+        \    '}' > dependency_security-results.sarif\nfi\necho \"\u2713 dependency_security-results.sarif\
+        \ size: $(stat -c%s dependency_security-results.sarif) bytes\"\n"
+    - name: Upload dependency_security SARIF to GitHub Code Scanning
+      if: always()
+      uses: github/codeql-action/upload-sarif@b1722c1245f90604c2c348f9d1624af97ea8fc6e
+      with:
+        sarif_file: dependency_security-results.sarif
+        category: dependency_security

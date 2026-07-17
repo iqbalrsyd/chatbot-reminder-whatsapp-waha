@@ -34,17 +34,6 @@ jobs:
         config: p/owasp-top-ten p/javascript p/nodejs p/expressjs p/sql-injection
           p/secrets p/dockerfile
       continue-on-error: false
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: false
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
-      with:
-        persist-credentials: false
-    - name: Run go test (standard library)
-      run: echo 'Test execution for go test (standard library)'
   sast:
     runs-on: ubuntu-latest
     timeout-minutes: 20
